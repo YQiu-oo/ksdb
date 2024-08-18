@@ -7,12 +7,17 @@ type Options struct {
 	DataFileSize int64
 	SyncWrites   bool
 	IndexType    IndexType
+	BytesSync    uint
+
+	MMap bool //是否需要在启动的时候用mmap
 }
 
 type IndexType = int8
 
 const (
 	BTree IndexType = iota + 1
+	Art
+	BplusTree
 )
 
 type IteratorOptions struct {
@@ -25,6 +30,8 @@ var DefaultOptions = Options{
 	DataFileSize: 256 * 1024 * 1024, // 256MB
 	SyncWrites:   false,
 	IndexType:    BTree,
+	BytesSync:    0,
+	MMap:         true,
 }
 
 var DefaultIteratorOptions = IteratorOptions{

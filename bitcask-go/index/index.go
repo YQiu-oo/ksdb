@@ -25,12 +25,19 @@ type IndexType = int8
 
 const (
 	bt IndexType = iota + 1
+	Art
+	BplusTree
 )
 
-func NewIndexer(typ IndexType) Indexer {
+func NewIndexer(typ IndexType, dirPath string, sync bool) Indexer {
 	switch typ {
 	case bt:
 		return NewBtree(32)
+
+	case Art:
+		return NewArt()
+	case BplusTree:
+		return NewBPlusTree(dirPath, sync)
 
 	default:
 		panic("unknown index type")

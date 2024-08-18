@@ -11,7 +11,8 @@ import (
 const (
 	DataFileNameSuffix = ".data"
 	HintFileNameSuffix = "hint-index"
-	MergeTagFile       = "merge-Finished"
+	MergeTagFile       = "merge-finished"
+	SeqNoFile          = "seq-no"
 )
 
 type DataFile struct {
@@ -22,7 +23,16 @@ type DataFile struct {
 
 func OpenMergeTagFile(path string) (*DataFile, error) {
 	fileName := filepath.Join(path, MergeTagFile)
-	manager, err := fio.NewIOManager(fileName)
+	manager, err := fio.NewIOManager(fileName, fio.StandardFIO)
+	if err != nil {
+		return nil, err
+	}
+	return &DataFile{FileId: 0, WriteOff: 0, IOManager: manager}, nil
+}
+
+func OpenSeqNoFile(path string) (*DataFile, error) {
+	fileName := filepath.Join(path, SeqNoFile)
+	manager, err := fio.NewIOManager(fileName, fio.StandardFIO)
 	if err != nil {
 		return nil, err
 	}
@@ -44,16 +54,16 @@ func GetDataFileName(path string, fileId uint32) string {
 }
 func OpenHintFile(path string) (*DataFile, error) {
 	fileName := filepath.Join(path, HintFileNameSuffix)
-	manager, err := fio.NewIOManager(fileName)
+	manager, err := fio.NewIOManager(fileName, fio.StandardFIO)
 	if err != nil {
 		return nil, err
 	}
 	return &DataFile{FileId: 0, WriteOff: 0, IOManager: manager}, nil
 
 }
-func OpenDataFile(path string, fileId uint32) (*DataFile, error) {
+func OpenDataFile(path string, fileId uint32, iotype fio.FileIOType) (*DataFile, error) {
 	fileName := filepath.Join(path, fmt.Sprintf("%09d", fileId)+DataFileNameSuffix)
-	manager, err := fio.NewIOManager(fileName)
+	manager, err := fio.NewIOManager(fileName, iotype)
 	if err != nil {
 		return nil, err
 	}
@@ -125,4 +135,16 @@ func (d *DataFile) readNBytes(n int64, offset int64) (b []byte, err error) {
 	b = make([]byte, n)
 	_, err = d.IOManager.Read(b, offset)
 	return
+}
+
+func (df *DataFile) SetIOManager(path string, iotype fio.FileIOType) error {
+	if err := df.IOManager.Close(); err != nil {
+		return err
+	}
+	ioManager, err := fio.NewIOManager(GetDataFileName(path, df.FileId), iotype)
+	if err != nil {
+		return err
+	}
+	df.IOManager = ioManager
+	return nil
 }

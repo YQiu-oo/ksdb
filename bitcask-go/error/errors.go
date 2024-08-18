@@ -11,4 +11,5 @@ var (
 
 	ExceedMaxBatchSizeError = errors.New("max batch size exceed")
 	MergeInProgressError    = errors.New("merge in progress")
+	DataBaseIsUsingError    = errors.New("data base is using error")
 )

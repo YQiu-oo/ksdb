@@ -3,11 +3,13 @@ package db
 import (
 	"bitcask-go/data"
 	error2 "bitcask-go/error"
+	"bitcask-go/fio"
 	"bitcask-go/index"
 	"bitcask-go/merge"
 	"bitcask-go/option"
 	"errors"
 	"fmt"
+	"github.com/gofrs/flock"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,16 +20,24 @@ import (
 	"time"
 )
 
-type DB struct {
-	option    option.Options
-	Mu        *sync.RWMutex
-	active    *data.DataFile            //allow write
-	old       map[uint32]*data.DataFile //only read old file
-	Index     index.Indexer
-	fileIds   []int //加载索引的时候
-	IsMerging bool
+const (
+	SeqKey        = "SeqNo"
+	FileFlockName = "flock"
+)
 
-	SeqNo uint64
+type DB struct {
+	option       option.Options
+	Mu           *sync.RWMutex
+	active       *data.DataFile            //allow write
+	old          map[uint32]*data.DataFile //only read old file
+	Index        index.Indexer
+	fileIds      []int //加载索引的时候
+	IsMerging    bool
+	SeqNo        uint64
+	SeqFileExist bool
+	isInitial    bool //是否第一次初始化
+	fileLock     *flock.Flock
+	bytesWrite   uint
 }
 
 func (d *DB) GetOptions() option.Options {
@@ -54,19 +64,39 @@ func OpenDB(option option.Options) (*DB, error) {
 	if err := CheckOptions(option); err != nil {
 		return nil, err
 	}
+	var isInitial bool
 	//create dir if dir path not exist
 	if _, err := os.Stat(option.DirPath); os.IsNotExist(err) {
+		isInitial = true
 		if err := os.Mkdir(option.DirPath, os.ModePerm); err != nil {
 			return nil, err
 
 		}
 	}
+	fileFlock := flock.New(filepath.Join(option.DirPath, FileFlockName))
+	hold, err := fileFlock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !hold {
+		return nil, error2.DataBaseIsUsingError
+	}
+
+	entries, err := os.ReadDir(option.DirPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		isInitial = true
+	}
 
 	db := &DB{
-		option: option,
-		Mu:     new(sync.RWMutex),
-		old:    make(map[uint32]*data.DataFile),
-		Index:  index.NewIndexer(index.IndexType(option.IndexType)), //cast
+		option:    option,
+		Mu:        new(sync.RWMutex),
+		old:       make(map[uint32]*data.DataFile),
+		Index:     index.NewIndexer(option.IndexType, option.DirPath, option.SyncWrites), //cast
+		isInitial: isInitial,
+		fileLock:  fileFlock,
 	}
 	if err := merge.LoadMergeFiles(db); err != nil {
 		return nil, err
@@ -76,16 +106,54 @@ func OpenDB(option option.Options) (*DB, error) {
 	if err := db.loadDataFile(); err != nil {
 		return nil, err
 	}
-	//从hint文件中加载索引文件
-	if err := merge.LoadIndexFromIndexFile(db); err != nil {
-		return nil, err
+
+	if option.IndexType != index.BplusTree {
+		//从hint文件中加载索引文件
+		if err := merge.LoadIndexFromIndexFile(db); err != nil {
+			return nil, err
+		}
+
+		//加载索引
+		if err := db.loadIndexFromDataFile(); err != nil {
+			return nil, err
+		}
 	}
 
-	//加载索引
-	if err := db.loadIndexFromDataFile(); err != nil {
-		return nil, err
+	if option.IndexType == index.BplusTree {
+		if err := db.loadSeqNo(); err != nil {
+			return nil, err
+		}
 	}
+	if db.option.MMap {
+		if err := db.resetIoType(); err != nil {
+			return nil, err
+		}
+	}
+
 	return db, nil
+
+}
+func (db *DB) loadSeqNo() error {
+	fileName := filepath.Join(db.option.DirPath, data.SeqNoFile)
+	if _, err := os.Stat(fileName); os.IsNotExist(err) {
+		return nil
+	}
+	seqFile, err := data.OpenSeqNoFile(db.option.DirPath)
+	if err != nil {
+		return err
+	}
+	record, _, err := seqFile.Read(0)
+	if err != nil {
+		return err
+	}
+
+	seqNum, err := strconv.ParseUint(string(record.Value), 10, 64)
+	if err != nil {
+		return err
+	}
+	db.SeqNo = seqNum
+	db.SeqFileExist = true
+	return os.Remove(fileName)
 
 }
 
@@ -185,10 +253,18 @@ func (db *DB) AppendLogRecord(record *data.LogRecord) (*data.LogRecordPos, error
 	if err := db.active.Write(encodelogrecord); err != nil {
 		return nil, err
 	}
+	db.bytesWrite += uint(size)
+	var needSync = db.option.SyncWrites
+	if !needSync && db.option.BytesSync > 0 && db.bytesWrite >= db.option.BytesSync {
+		needSync = true
+	}
 
-	if db.option.SyncWrites {
+	if needSync {
 		if err := db.active.Sync(); err != nil {
 			return nil, err
+		}
+		if db.bytesWrite > 0 {
+			db.bytesWrite = 0
 		}
 
 	}
@@ -205,7 +281,7 @@ func (db *DB) SetActiveFile() error {
 	}
 
 	//open new file, user determines these param through configurations
-	datafile, err := data.OpenDataFile(db.option.DirPath, initialFileId)
+	datafile, err := data.OpenDataFile(db.option.DirPath, initialFileId, fio.StandardFIO)
 	if err != nil {
 		return err
 	}
@@ -233,9 +309,12 @@ func (db *DB) loadDataFile() error {
 
 	sort.Ints(fileIds)
 	db.fileIds = fileIds
-
+	iotype := fio.StandardFIO
+	if db.option.MMap {
+		iotype = fio.MemoryMap
+	}
 	for i, id := range fileIds {
-		dataFile, err := data.OpenDataFile(db.option.DirPath, uint32(id))
+		dataFile, err := data.OpenDataFile(db.option.DirPath, uint32(id), iotype)
 		if err != nil {
 			return err
 		}
@@ -396,6 +475,11 @@ func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
 }
 
 func (db *DB) Close() error {
+	defer func() {
+		if err := db.fileLock.Unlock(); err != nil {
+			panic(fmt.Sprintf("Failed to unlock file lock: %s", err))
+		}
+	}()
 	if db.active == nil {
 		return nil
 	}
@@ -403,6 +487,24 @@ func (db *DB) Close() error {
 	db.Mu.Lock()
 	defer db.Mu.Unlock()
 
+	//保存当前事务序列号
+	seqNoFile, err := data.OpenSeqNoFile(db.option.DirPath)
+	if err != nil {
+		return err
+	}
+	record := &data.LogRecord{
+		Key:   []byte(SeqKey),
+		Value: []byte(strconv.FormatUint(db.SeqNo, 10)),
+	}
+
+	encRecord, _ := data.EncodeLogRecord(record)
+
+	if err := seqNoFile.Write(encRecord); err != nil {
+		return err
+	}
+	if err := seqNoFile.Sync(); err != nil {
+		return err
+	}
 	// 同步活跃文件内容并关闭
 	if err := db.active.Sync(); err != nil {
 		return err
@@ -429,4 +531,21 @@ func (db *DB) Close() error {
 	time.Sleep(100 * time.Millisecond)
 
 	return firstErr
+}
+
+// 将数据文件的 IO 类型设置为标准文件 IO
+func (db *DB) resetIoType() error {
+	if db.active == nil {
+		return nil
+	}
+
+	if err := db.active.SetIOManager(db.option.DirPath, fio.StandardFIO); err != nil {
+		return err
+	}
+	for _, dataFile := range db.old {
+		if err := dataFile.SetIOManager(db.option.DirPath, fio.StandardFIO); err != nil {
+			return err
+		}
+	}
+	return nil
 }
