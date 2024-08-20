@@ -3,26 +3,31 @@ package db
 import (
 	"bitcask-go/option"
 	"bitcask-go/utils"
+	"fmt"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"testing"
+	"time"
 )
 
-func destroyDB(db *DB) {
+func destroyDB(db *DB) error {
 	if db != nil {
-		if db.active != nil {
-			_ = db.Close()
-		}
-		for _, of := range db.old {
-			if of != nil {
-				_ = of.Close()
-			}
-		}
-		err := os.RemoveAll(db.option.DirPath)
+		err := db.Close()
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("failed to close db: %w", err)
 		}
+
+		// 确保文件锁已释放
+		// 尝试删除目录时，确保文件锁已解除
+		time.Sleep(100 * time.Millisecond) // 延迟确保文件锁释放
 	}
+
+	err := os.RemoveAll(db.option.DirPath)
+	if err != nil {
+		return fmt.Errorf("failed to remove directory: %w", err)
+	}
+
+	return nil
 }
 func TestDB_NewIterator(t *testing.T) {
 	opts := option.DefaultOptions

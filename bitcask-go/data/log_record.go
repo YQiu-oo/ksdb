@@ -32,6 +32,7 @@ type logRecorderHeader struct {
 type LogRecordPos struct {
 	Fid    uint32
 	Offset int64
+	Size   uint32 //数据在磁盘上的大小
 }
 
 // return byte and len of content
@@ -93,10 +94,11 @@ func GetLogRecordCRC(lr *LogRecord, header []byte) uint32 {
 	return crc
 }
 func EncodeLogRecordPos(pos *LogRecordPos) []byte {
-	buf := make([]byte, binary.MaxVarintLen32+binary.MaxVarintLen64)
+	buf := make([]byte, binary.MaxVarintLen32*2+binary.MaxVarintLen64)
 	var index = 0
 	index += binary.PutVarint(buf[index:], int64(pos.Fid))
 	index += binary.PutVarint(buf[index:], pos.Offset)
+	index += binary.PutVarint(buf[index:], int64(pos.Size))
 	return buf[:index]
 }
 
@@ -106,9 +108,12 @@ func DecodeLogRecordPos(buf []byte) *LogRecordPos {
 	index += n
 	offset, n := binary.Varint(buf[index:])
 	index += n
+	Size, n := binary.Varint(buf[index:])
+
 	return &LogRecordPos{
 		uint32(fid),
 		offset,
+		uint32(Size),
 	}
 }
 

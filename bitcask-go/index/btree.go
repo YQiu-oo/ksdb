@@ -28,12 +28,15 @@ func (b *Btree) Close() error {
 func (bt *Btree) Size() int {
 	return bt.tree.Len()
 }
-func (b *Btree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (b *Btree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	it := &Item{key: key, pos: pos}
 	b.lock.Lock()
 	defer b.lock.Unlock()
-	b.tree.ReplaceOrInsert(it)
-	return true
+	oldval := b.tree.ReplaceOrInsert(it)
+	if oldval == nil {
+		return nil
+	}
+	return oldval.(*Item).pos
 }
 func (b *Btree) Get(key []byte) *data.LogRecordPos {
 	it := &Item{key: key}
@@ -43,16 +46,16 @@ func (b *Btree) Get(key []byte) *data.LogRecordPos {
 	}
 	return btreeItem.(*Item).pos
 }
-func (b *Btree) Delete(key []byte) bool {
+func (b *Btree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	it := &Item{key: key}
 
 	b.lock.Lock()
 	defer b.lock.Unlock()
 	oldItem := b.tree.Delete(it)
 	if oldItem == nil {
-		return false
+		return nil, false
 	}
-	return true
+	return oldItem.(*Item).pos, true
 
 }
 

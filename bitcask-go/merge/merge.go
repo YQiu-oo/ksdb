@@ -2,8 +2,10 @@ package merge
 
 import (
 	"bitcask-go/data"
-	db2 "bitcask-go/db"
+	db3 "bitcask-go/db"
 	error2 "bitcask-go/error"
+	"bitcask-go/utils"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -21,13 +23,33 @@ const (
 	MergeFinishedKey = "merge.Finished"
 )
 
-func Merge(db *db2.DB) error {
+func Merge(db *db3.DB) error {
 	if db.GetActiveFile() == nil {
 		return nil
 	}
 	db.Mu.Lock()
 
 	if db.IsMerging {
+		db.Mu.Unlock()
+		return error2.MergeInProgressError
+	}
+
+	dirsize, err := utils.DirSize(db.GetOptions().DirPath)
+	if err != nil {
+		db.Mu.Unlock()
+		return err
+	}
+	if float32(db.ReclaimSize)/float32(dirsize) < db.GetOptions().MergeRatio {
+		db.Mu.Unlock()
+		return errors.New("has not reached merge ratio")
+	}
+	availablediskSize, err := utils.AvailableDiskSize()
+	if err != nil {
+		db.Mu.Unlock()
+		return err
+	}
+
+	if uint64(dirsize-db.ReclaimSize) >= availablediskSize {
 		db.Mu.Unlock()
 		return error2.MergeInProgressError
 	}
@@ -69,7 +91,7 @@ func Merge(db *db2.DB) error {
 	mergeOptions.DirPath = mergePath
 	mergeOptions.SyncWrites = false
 
-	mergeDB, err := db2.OpenDB(mergeOptions)
+	mergeDB, err := db3.OpenDB(mergeOptions)
 	if err != nil {
 		return err
 	}
@@ -88,11 +110,11 @@ func Merge(db *db2.DB) error {
 				}
 				return err
 			}
-			realKey, _ := db2.ParseLogRecordKey(logRecord.Key)
+			realKey, _ := db3.ParseLogRecordKey(logRecord.Key)
 			pos := db.Index.Get(realKey)
 			if pos != nil && pos.Fid == dataFile.FileId && pos.Offset == offset {
 				//清除事务标记
-				logRecord.Key = db2.LogRecordWithKeySeqNo(realKey, db2.NonTrans)
+				logRecord.Key = db3.LogRecordWithKeySeqNo(realKey, db3.NonTrans)
 				pos, err := mergeDB.AppendLogRecord(logRecord)
 				if err != nil {
 					return err
@@ -133,13 +155,13 @@ func Merge(db *db2.DB) error {
 	return nil
 }
 
-func GetMergePath(db *db2.DB) string {
+func GetMergePath(db *db3.DB) string {
 	dir := path.Dir(path.Clean(db.GetOptions().DirPath))
 	base := path.Base(db.GetOptions().DirPath)
 	return path.Join(dir, base+MergeDirName)
 }
 
-func LoadMergeFiles(db *db2.DB) error {
+func LoadMergeFiles(db *db3.DB) error {
 	mergePath := GetMergePath(db)
 	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
 		return nil
@@ -158,6 +180,12 @@ func LoadMergeFiles(db *db2.DB) error {
 		if file.Name() == data.MergeTagFile {
 			mergeFinished = true
 
+		}
+		if file.Name() == data.SeqNoFile {
+			continue
+		}
+		if file.Name() == db3.FileFlockName {
+			continue
 		}
 		mergeFileNames = append(mergeFileNames, file.Name())
 	}
@@ -191,7 +219,7 @@ func LoadMergeFiles(db *db2.DB) error {
 	return nil
 }
 
-func GetNonMergeFiles(db *db2.DB, path string) (uint32, error) {
+func GetNonMergeFiles(db *db3.DB, path string) (uint32, error) {
 	mergeFinishedFile, err := data.OpenMergeTagFile(path)
 	if err != nil {
 		return 0, err
@@ -208,7 +236,7 @@ func GetNonMergeFiles(db *db2.DB, path string) (uint32, error) {
 
 }
 
-func LoadIndexFromIndexFile(db *db2.DB) error {
+func LoadIndexFromIndexFile(db *db3.DB) error {
 	hintFileName := filepath.Join(db.GetOptions().DirPath, data.HintFileNameSuffix)
 
 	if _, err := os.Stat(hintFileName); os.IsNotExist(err) {

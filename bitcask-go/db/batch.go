@@ -111,11 +111,15 @@ func (w *WriteBatch) Commit() error {
 	//更新内存索引
 	for _, record := range w.temp {
 		pos := t[string(record.Key)]
+		var oldPos *data.LogRecordPos
 		if record.Type == data.Normal {
-			w.db.Index.Put(record.Key, pos)
+			oldPos = w.db.Index.Put(record.Key, pos)
 		}
 		if record.Type == data.Deleted {
-			w.db.Index.Delete(record.Key)
+			oldPos, _ = w.db.Index.Delete(record.Key)
+		}
+		if oldPos != nil {
+			w.db.reclaimSize += int64(oldPos.Size)
 		}
 
 	}

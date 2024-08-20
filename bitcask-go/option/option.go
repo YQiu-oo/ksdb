@@ -10,6 +10,9 @@ type Options struct {
 	BytesSync    uint
 
 	MMap bool //是否需要在启动的时候用mmap
+
+	//merge阈值
+	MergeRatio float32
 }
 
 type IndexType = int8
@@ -32,6 +35,7 @@ var DefaultOptions = Options{
 	IndexType:    BTree,
 	BytesSync:    0,
 	MMap:         true,
+	MergeRatio:   0.5,
 }
 
 var DefaultIteratorOptions = IteratorOptions{

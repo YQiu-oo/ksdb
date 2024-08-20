@@ -21,11 +21,14 @@ func NewArt() *AdaptiveRadixTree {
 		lock: sync.RWMutex{},
 	}
 }
-func (ad *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (ad *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	ad.lock.Lock()
 	defer ad.lock.Unlock()
-	ad.tree.Insert(key, pos)
-	return true
+	oldItem, _ := ad.tree.Insert(key, pos)
+	if oldItem == nil {
+		return nil
+	}
+	return oldItem.(*data.LogRecordPos)
 }
 func (ad *AdaptiveRadixTree) Get(key []byte) *data.LogRecordPos {
 	ad.lock.RLock()
@@ -37,11 +40,14 @@ func (ad *AdaptiveRadixTree) Get(key []byte) *data.LogRecordPos {
 	}
 	return value.(*data.LogRecordPos)
 }
-func (ad *AdaptiveRadixTree) Delete(key []byte) bool {
+func (ad *AdaptiveRadixTree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	ad.lock.Lock()
 	defer ad.lock.Unlock()
-	_, deleted := ad.tree.Delete(key)
-	return deleted
+	oldItem, deleted := ad.tree.Delete(key)
+	if oldItem == nil {
+		return nil, false
+	}
+	return oldItem.(*data.LogRecordPos), deleted
 }
 func (ad *AdaptiveRadixTree) Close() error {
 
