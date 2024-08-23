@@ -119,7 +119,7 @@ func (w *WriteBatch) Commit() error {
 			oldPos, _ = w.db.Index.Delete(record.Key)
 		}
 		if oldPos != nil {
-			w.db.reclaimSize += int64(oldPos.Size)
+			w.db.ReclaimSize += int64(oldPos.Size)
 		}
 
 	}

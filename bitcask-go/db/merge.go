@@ -1,8 +1,7 @@
-package merge
+package db
 
 import (
 	"bitcask-go/data"
-	db3 "bitcask-go/db"
 	error2 "bitcask-go/error"
 	"bitcask-go/utils"
 	"errors"
@@ -23,7 +22,7 @@ const (
 	MergeFinishedKey = "merge.Finished"
 )
 
-func Merge(db *db3.DB) error {
+func Merge(db *DB) error {
 	if db.GetActiveFile() == nil {
 		return nil
 	}
@@ -91,7 +90,7 @@ func Merge(db *db3.DB) error {
 	mergeOptions.DirPath = mergePath
 	mergeOptions.SyncWrites = false
 
-	mergeDB, err := db3.OpenDB(mergeOptions)
+	mergeDB, err := OpenDB(mergeOptions)
 	if err != nil {
 		return err
 	}
@@ -110,11 +109,11 @@ func Merge(db *db3.DB) error {
 				}
 				return err
 			}
-			realKey, _ := db3.ParseLogRecordKey(logRecord.Key)
+			realKey, _ := ParseLogRecordKey(logRecord.Key)
 			pos := db.Index.Get(realKey)
 			if pos != nil && pos.Fid == dataFile.FileId && pos.Offset == offset {
 				//清除事务标记
-				logRecord.Key = db3.LogRecordWithKeySeqNo(realKey, db3.NonTrans)
+				logRecord.Key = LogRecordWithKeySeqNo(realKey, NonTrans)
 				pos, err := mergeDB.AppendLogRecord(logRecord)
 				if err != nil {
 					return err
@@ -155,13 +154,13 @@ func Merge(db *db3.DB) error {
 	return nil
 }
 
-func GetMergePath(db *db3.DB) string {
+func GetMergePath(db *DB) string {
 	dir := path.Dir(path.Clean(db.GetOptions().DirPath))
 	base := path.Base(db.GetOptions().DirPath)
 	return path.Join(dir, base+MergeDirName)
 }
 
-func LoadMergeFiles(db *db3.DB) error {
+func LoadMergeFiles(db *DB) error {
 	mergePath := GetMergePath(db)
 	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
 		return nil
@@ -184,7 +183,7 @@ func LoadMergeFiles(db *db3.DB) error {
 		if file.Name() == data.SeqNoFile {
 			continue
 		}
-		if file.Name() == db3.FileFlockName {
+		if file.Name() == FileFlockName {
 			continue
 		}
 		mergeFileNames = append(mergeFileNames, file.Name())
@@ -219,7 +218,7 @@ func LoadMergeFiles(db *db3.DB) error {
 	return nil
 }
 
-func GetNonMergeFiles(db *db3.DB, path string) (uint32, error) {
+func GetNonMergeFiles(db *DB, path string) (uint32, error) {
 	mergeFinishedFile, err := data.OpenMergeTagFile(path)
 	if err != nil {
 		return 0, err
@@ -236,7 +235,7 @@ func GetNonMergeFiles(db *db3.DB, path string) (uint32, error) {
 
 }
 
-func LoadIndexFromIndexFile(db *db3.DB) error {
+func LoadIndexFromIndexFile(db *DB) error {
 	hintFileName := filepath.Join(db.GetOptions().DirPath, data.HintFileNameSuffix)
 
 	if _, err := os.Stat(hintFileName); os.IsNotExist(err) {

@@ -5,7 +5,6 @@ import (
 	error2 "bitcask-go/error"
 	"bitcask-go/fio"
 	"bitcask-go/index"
-	"bitcask-go/merge"
 	"bitcask-go/option"
 	"bitcask-go/utils"
 	"errors"
@@ -59,7 +58,7 @@ func (db *DB) Stat() *Stat {
 		KeyNum:         uint(db.Index.Size()),
 		DataFileNum:    datafiles,
 		ReclaimableNum: db.ReclaimSize,
-		DiskSize:       int64(dirsize), //Todo
+		DiskSize:       int64(dirsize),
 	}
 }
 
@@ -138,7 +137,7 @@ func OpenDB(option option.Options) (*DB, error) {
 		isInitial: isInitial,
 		fileLock:  fileFlock,
 	}
-	if err := merge.LoadMergeFiles(db); err != nil {
+	if err := LoadMergeFiles(db); err != nil {
 		return nil, err
 	}
 
@@ -383,7 +382,7 @@ func (db *DB) loadIndexFromDataFile() error {
 	mergeFinishedFile := filepath.Join(db.option.DirPath, data.MergeTagFile)
 	if _, err := os.Stat(mergeFinishedFile); err == nil {
 
-		file, err := merge.GetNonMergeFiles(db, db.option.DirPath)
+		file, err := GetNonMergeFiles(db, db.option.DirPath)
 		if err != nil {
 			return err
 		}
@@ -473,7 +472,7 @@ func (db *DB) Delete(key []byte) error {
 		return error2.EmptyKeyError
 	}
 
-	if pos := db.Index.Get(key); pos != nil {
+	if pos := db.Index.Get(key); pos == nil {
 		return nil
 	}
 
